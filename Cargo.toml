@@ -21,6 +21,10 @@ license = "MIT OR Apache-2.0"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [dependencies]
+# UniFFI：Kotlin 绑定由 gobley-uniffi-bindgen 0.3.7 生成，其内置 uniffi_bindgen 为 0.29.4。
+# 元数据格式按精确版本校验，此处必须锁定同一版本，否则 bindgen 静默只产出公共骨架。
+uniffi = "=0.29.4"
+thiserror = "2"
 openlogi-core = { path = "crates/openlogi-core", default-features = false }
 openlogi-hidpp = { path = "crates/openlogi-hidpp" }
 openlogi-hid = { path = "crates/openlogi-hid" }

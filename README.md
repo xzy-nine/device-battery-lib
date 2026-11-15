@@ -1,8 +1,8 @@
 # device-battery-lib
 
-Logitech 设备电池读取库（FFI 友好，提供 `cdylib` / `staticlib`）。
+Logitech 设备电池读取库（UniFFI 导出，提供 `cdylib` / `staticlib`）。
 
-本项目基于 [OpenLogi](https://github.com/OpenLogi/OpenLogi) 的部分 crate（`openlogi-core`、`openlogi-hidpp`、`openlogi-hid`、`openlogi-device` 等）裁剪而来，聚焦电池状态读取能力，并新增 FFI 层。
+本项目基于 [OpenLogi](https://github.com/OpenLogi/OpenLogi) 的部分 crate（`openlogi-core`、`openlogi-hidpp`、`openlogi-hid`、`openlogi-device` 等）裁剪而来，聚焦电池状态读取能力，并新增 UniFFI 导出层。
 
 ## 开源协议（License Notice）
 
@@ -19,4 +19,18 @@ Logitech 设备电池读取库（FFI 友好，提供 `cdylib` / `staticlib`）�
 cargo build --release
 ```
 
-产物位于 `target/release/`（`device_battery_lib.dll` / `.so` / `.a`），FFI 接口见 [docs/ffi.md](docs/ffi.md)。
+产物位于 `target/release/`（`device_battery_lib.dll` / `.so` / `.a`）。
+
+接口经 UniFFI 导出，Rust 侧入口为 `api::BatteryLib`：
+
+```rust
+use device_battery_lib::api::BatteryLib;
+
+let lib = BatteryLib::new();
+let snapshot = lib.enumerate_devices()?;
+for device in &snapshot.devices {
+    println!("{}: {}%", device.name, device.percentage);
+}
+```
+
+Kotlin 绑定由 `gobley-uniffi-bindgen` 依 `uniffi.toml` 生成，接口与数据类型的完整说明见 [docs/api.md](docs/api.md)。

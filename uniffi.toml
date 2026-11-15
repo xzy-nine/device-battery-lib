@@ -1,0 +1,15 @@
+# 供 :desktop:uniffiBatteryBindgen 使用。
+# Gobley 的 KotlinBindingGenerator::new_config 直接把配置文件的根表按扁平结构反序列化，
+# 不读取 [bindings.kotlin] 子表（与官方 uniffi-bindgen 不同）。故所有键写在顶层。
+
+package_name = "notifyrelay.battery.ffi"
+
+# 生成的 Kotlin 绑定以此为动态库名进行 JNA 加载，
+# 与 cargo 产出的 device_battery_lib.dll 对应。
+cdylib_name = "device_battery_lib"
+
+# true：common 源集只产出 expect 声明，实现只在目标源集中产出。
+kotlin_multiplatform = true
+
+# 本库只服务桌面端，故只产出 jvm 目标。
+kotlin_targets = ["jvm"]
