@@ -1,6 +1,6 @@
-# logi-battery FFI 接口文档
+# device-battery-lib FFI 接口文档
 
-`logi-battery` 提供 C ABI（`cdylib`）导出，可供 C / C++ / Python (ctypes) /
+`device-battery-lib` 提供 C ABI（`cdylib`）导出，可供 C / C++ / Python (ctypes) /
 Rust (extern) 等任何能调用 C 函数的语言使用。底层复用 OpenLogi 的完整
 HID++ 实现，无需自行处理协议细节。
 
@@ -14,9 +14,9 @@ cargo build --release
 
 | 平台 | 文件 |
 |------|------|
-| Windows | `target/release/logi_battery.dll`（另有 `.lib` 导入库） |
-| Linux | `target/release/liblogi_battery.so` |
-| macOS | `target/release/liblogi_battery.dylib` |
+| Windows | `target/release/device_battery_lib.dll`（另有 `.lib` 导入库） |
+| Linux | `target/release/libdevice_battery_lib.so` |
+| macOS | `target/release/libdevice_battery_lib.dylib` |
 
 > 注意：库内部会创建 tokio 运行时并阻塞等待枚举/读取完成，
 > 单个调用耗时约数百毫秒到数秒，请勿在 UI 主线程中高频调用。
@@ -26,7 +26,7 @@ cargo build --release
 所有结构体为 C 兼容内存布局（`#[repr(C)]`），字段均为固定大小数组或标量。
 
 ```c
-/* logi_battery.h */
+/* device_battery_lib.h */
 #include <stdint.h>
 
 /* 设备信息（含电量快照） */
@@ -109,7 +109,7 @@ enum LbBatteryStatus {
 
 ```c
 #include <stdio.h>
-#include "logi_battery.h"
+#include "device_battery_lib.h"
 
 int main(void) {
     LbDeviceList list = {0};
@@ -130,7 +130,7 @@ int main(void) {
 编译（Windows MinGW 示例，DLL 与可执行文件同目录）：
 
 ```bash
-gcc demo.c -o demo.exe logi_battery.dll
+gcc demo.c -o demo.exe device_battery_lib.dll
 ```
 
 ### Python (ctypes)
@@ -150,7 +150,7 @@ class LbDeviceInfo(Structure):
 class LbDeviceList(Structure):
     _fields_ = [("devices", POINTER(LbDeviceInfo)), ("count", c_int32)]
 
-lib = ctypes.CDLL("logi_battery.dll")
+lib = ctypes.CDLL("device_battery_lib.dll")
 lib.lb_enumerate_devices.argtypes = [POINTER(LbDeviceList)]
 lib.lb_enumerate_devices.restype = c_int32
 lib.lb_last_error.restype = POINTER(ctypes.c_uint8)
@@ -170,7 +170,7 @@ lib.lb_free_devices(lst)
 ### Rust
 
 ```rust
-use logi_battery::ffi::{lb_enumerate_devices, lb_free_devices, LbDeviceList};
+use device_battery_lib::ffi::{lb_enumerate_devices, lb_free_devices, LbDeviceList};
 
 unsafe {
     let mut list = LbDeviceList {

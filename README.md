@@ -1,4 +1,4 @@
-# logi-battery
+# device-battery-lib
 
 Logitech 设备电池读取库（FFI 友好，提供 `cdylib` / `staticlib`）。
 
@@ -19,4 +19,4 @@ Logitech 设备电池读取库（FFI 友好，提供 `cdylib` / `staticlib`）�
 cargo build --release
 ```
 
-产物位于 `target/release/`（`logi_battery.dll` / `.so` / `.a`），FFI 接口见 [docs/ffi.md](docs/ffi.md)。
+产物位于 `target/release/`（`device_battery_lib.dll` / `.so` / `.a`），FFI 接口见 [docs/ffi.md](docs/ffi.md)。

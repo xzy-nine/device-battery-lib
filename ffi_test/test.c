@@ -55,7 +55,7 @@ static const char *status_str(uint8_t status) {
 }
 
 int main(void) {
-    printf("=== logi-battery FFI test ===\n\n");
+    printf("=== device-battery-lib FFI test ===\n\n");
 
     /* 1. 枚举设备 */
     LbDeviceList list = {0};

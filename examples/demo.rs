@@ -1,8 +1,8 @@
-use logi_battery::enumerate;
+use device_battery_lib::enumerate;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    println!("=== Logi Battery 测试 ===\n");
+    println!("=== Device Battery Lib 测试 ===\n");
 
     // 枚举设备
     println!("正在枚举 Logitech HID++ 设备...");
