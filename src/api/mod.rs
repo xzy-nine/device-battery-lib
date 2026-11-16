@@ -61,10 +61,21 @@ fn charge_status(status: BatteryStatus) -> ChargeStatus {
     }
 }
 
+/// 设备所属厂商。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
+pub enum DeviceVendor {
+    /// 罗技（HID++）
+    Logitech,
+    /// 飞智
+    Flydigi,
+}
+
 /// 一台设备的电量快照。
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct BatteryDeviceInfo {
-    /// USB Vendor ID（0x046D = Logitech）
+    /// 设备所属厂商
+    pub vendor: DeviceVendor,
+    /// USB Vendor ID（0x046D = Logitech，0x37D7 = Flydigi）
     pub vendor_id: u16,
     /// USB Product ID
     pub product_id: u16,
@@ -168,6 +179,7 @@ fn collect_devices() -> Result<Vec<BatteryDeviceInfo>, BatteryError> {
             };
 
             items.push(BatteryDeviceInfo {
+                vendor: DeviceVendor::Logitech,
                 vendor_id: inv.receiver.vendor_id,
                 product_id: inv.receiver.product_id,
                 name: display,
@@ -183,6 +195,51 @@ fn collect_devices() -> Result<Vec<BatteryDeviceInfo>, BatteryError> {
     Ok(items)
 }
 
+/// 枚举飞智设备及其电量。
+///
+/// 飞智电量取自 Space Station 服务的命名管道，服务未安装或未运行时按空列表处理：
+/// 不阻断罗技设备的结果。
+fn collect_flydigi_devices() -> Vec<BatteryDeviceInfo> {
+    let Ok(devices) = crate::flydigi::enumerate() else {
+        return Vec::new();
+    };
+
+    devices
+        .into_iter()
+        .map(|device| BatteryDeviceInfo {
+            vendor: DeviceVendor::Flydigi,
+            vendor_id: device.vendor_id,
+            product_id: device.product_id,
+            name: if device.product_name.is_empty() {
+                device.device_code.clone()
+            } else {
+                device.product_name.clone()
+            },
+            slot: 0,
+            online: device.connected,
+            has_battery: true,
+            percentage: device.battery_percent(),
+            level: level_kind_from_percent(device.battery_percent()),
+            // 服务不区分充电与满电，只给档位；按档位是否已满推断。
+            status: if device.battery_percent() >= 100 {
+                ChargeStatus::Full
+            } else {
+                ChargeStatus::Discharging
+            },
+        })
+        .collect()
+}
+
+/// 按电量百分比归类到本库的电量等级。
+fn level_kind_from_percent(percent: u8) -> BatteryLevelKind {
+    match percent {
+        0..=10 => BatteryLevelKind::Critical,
+        11..=30 => BatteryLevelKind::Low,
+        31..=80 => BatteryLevelKind::Good,
+        _ => BatteryLevelKind::Full,
+    }
+}
+
 #[uniffi::export]
 impl BatteryLib {
     /// 创建电池读取库的入口。
@@ -192,9 +249,11 @@ impl BatteryLib {
     }
 
     /// 枚举设备并读取电量快照。
+    ///
+    /// 罗技与飞智各自独立枚举：一个后端失败不影响另一个后端的结果。
     pub fn enumerate_devices(&self) -> Result<BatterySnapshot, BatteryError> {
-        Ok(BatterySnapshot {
-            devices: collect_devices()?,
-        })
+        let mut devices = collect_devices().unwrap_or_default();
+        devices.extend(collect_flydigi_devices());
+        Ok(BatterySnapshot { devices })
     }
 }

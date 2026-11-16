@@ -1,6 +1,15 @@
 # device-battery-lib 接口文档
 
-`device-battery-lib` 经 UniFFI 导出跨语言接口，可供 Kotlin、Swift、Python 等语言调用，底层复用 OpenLogi 的完整 HID++ 实现，无需自行处理协议细节。
+`device-battery-lib` 经 UniFFI 导出跨语言接口，可供 Kotlin、Swift、Python 等语言调用。库内置两条互不相干的设备后端：罗技走 HID++，飞智走私有报文协议；两者共用同一套导出的接口。
+
+## 后端
+
+| 厂商 | 协议 | 电量来源 |
+|------|------|----------|
+| 罗技 | HID++ 0x1000 / 0x1001 等特性 | 设备直接上报百分比（0-100） |
+| 飞智 | Space Station 服务命名管道 | 服务上报的档位（一档 20%） |
+
+枚举时两条后端各自独立执行，任一后端失败都只贡献空结果，不影响另一后端。
 
 ## 构建
 
@@ -16,7 +25,7 @@ cargo build --release
 | Linux | `target/release/libdevice_battery_lib.so` |
 | macOS | `target/release/libdevice_battery_lib.dylib` |
 
-> 注意：库内部会创建 tokio 运行时并阻塞等待枚举/读取完成，单个调用耗时约数百毫秒到数秒，请勿在 UI 主线程中高频调用。
+> 注意：罗技与飞智的探测都是阻塞的 HID IO，单个调用耗时约数百毫秒到数秒，请勿在 UI 主线程中高频调用。
 
 ## 绑定生成
 
@@ -31,25 +40,32 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 
 ## 数据类型
 
+### `DeviceVendor`
+
+设备来源：`LOGITECH`、`FLYDIGI`。
+
 ### `BatteryDeviceInfo`
 
 一台设备的电量快照。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `vendorId` | `UShort` | USB Vendor ID（`0x046D` = Logitech） |
+| `vendor` | `DeviceVendor` | 设备来源 |
+| `vendorId` | `UShort` | USB Vendor ID（`0x046D` 罗技，`0x37D7` 飞智） |
 | `productId` | `UShort` | USB Product ID |
-| `name` | `String` | 设备名称（绑定记录中为 `name`） |
-| `slot` | `UByte` | 接收器配对槽位（1..=6；直连设备为 0） |
+| `name` | `String` | 设备名称 |
+| `slot` | `UByte` | 接收器配对槽位（1..=6；直连设备与飞智为 0） |
 | `online` | `Boolean` | 是否在线 |
 | `hasBattery` | `Boolean` | 是否有电量数据 |
 | `percentage` | `UByte` | 电量百分比 0-100 |
 | `level` | `BatteryLevelKind` | 电量等级 |
 | `status` | `ChargeStatus` | 充电状态 |
 
+飞智只上报档位而非百分比，`percentage` 按一档 20% 换算：档位 0 → 0%、1 → 20%、4 → 80%，5 档及以上按 100% 截断。服务不区分充电与满电，档位满时 `status` 记 `FULL`，其余记 `DISCHARGING`。
+
 ### `BatteryLevelKind`
 
-电量等级：`CRITICAL`、`LOW`、`GOOD`、`FULL`、`UNKNOWN`。
+电量等级：`CRITICAL`、`LOW`、`GOOD`、`FULL`、`UNKNOWN`。飞智按换算后的百分比归类：0-10 → `CRITICAL`，11-30 → `LOW`，31-80 → `GOOD`，其余 → `FULL`。
 
 ### `ChargeStatus`
 
@@ -65,9 +81,11 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 
 | 变体 | 含义 |
 |------|------|
-| `Enumerate(detail)` | 枚举或读取失败，`detail` 为原生错误描述 |
+| `Enumerate(detail)` | 罗技后端枚举失败，`detail` 为原生错误描述 |
 | `IndexOutOfRange(index)` | 请求的下标越界或为负 |
 | `NoBatteryData` | 设备无电量数据 |
+
+飞智后端失败不抛异常，只产出空结果。
 
 ## 接口
 
@@ -77,11 +95,11 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 
 ### `enumerateDevices(): BatterySnapshot`
 
-枚举所有 HID++ 设备及其电量快照。枚举失败时抛 `BatteryException.Enumerate`。
+枚举罗技与飞智设备及其电量快照。
 
 ### `BatterySnapshot.readBattery(index: Int): BatteryDeviceInfo`
 
-重新读取指定设备的电量（每次调用都会重新探测，可能耗时较长）。`index` 为 `enumerateDevices` 返回列表中的下标；越界或为负时抛 `BatteryException.IndexOutOfRange`。
+取指定下标设备的电量快照。`index` 为 `enumerateDevices` 返回列表中的下标；越界或为负时抛 `BatteryException.IndexOutOfRange`。
 
 ## 使用示例
 
@@ -93,7 +111,7 @@ import notifyrelay.battery.ffi.BatteryLib
 val lib = BatteryLib()
 val snapshot = lib.enumerateDevices()
 for (device in snapshot.devices) {
-    println("${device.name}: ${device.percentage.toInt()}% ${device.level} ${device.status}")
+    println("${device.vendor} ${device.name}: ${device.percentage.toInt()}% ${device.level} ${device.status}")
 }
 ```
 
@@ -105,11 +123,24 @@ use device_battery_lib::api::BatteryLib;
 let lib = BatteryLib::new();
 let snapshot = lib.enumerate_devices()?;
 for device in &snapshot.devices {
-    println!("{}: {}% {:?} {:?}", device.name, device.percentage, device.level, device.status);
+    println!("{:?} {}: {}% {:?} {:?}", device.vendor, device.name, device.percentage, device.level, device.status);
 }
 ```
 
+## 飞智服务管道
+
+飞智把设备电量算在它自己的 Space Station 服务里，经命名管道对外提供；官方界面与第三方工具都只是这条管道的客户端。实现在 [`src/flydigi.rs`](src/flydigi.rs)，要点：
+
+- 管道为 `\\.\pipe\fcs.sock`，服务未安装或未运行时不存在，此时返回空列表。
+- 分帧：`FDG_PROTOCOL\n` + `i32` 小端长度 + protobuf 消息。
+- 请求 `IpcRequest{ cmd = 4097 }`（GetConnectedDevices）取设备列表。
+- 响应 `ConnectedDevicesResponse` 内每条 `DeviceInfo` 的字段：1 productName、3 connectType、4 deviceCode、7 uid、8 isConnected、9 battery、11 vendorId、12 productId。
+- `battery` 是档位而非百分比，一档 20%。
+- 管道实例有限：句柄读完即释放，遇到 `ERROR_PIPE_BUSY` 时短暂等待后重试一次。
+
+本库不触碰 HID 与飞智的内核驱动，也不依赖其闭源二进制。
+
 ## 线程安全
 
-- 同一进程内可安全地从多个线程并发调用枚举/读取函数（内部每次调用创建独立的 tokio 运行时）。
+- 同一进程内可安全地从多个线程并发调用枚举函数（内部每次调用创建独立的 tokio 运行时）。
 - 枚举结果按值返回，不存在需要调用方释放的裸指针或句柄。

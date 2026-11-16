@@ -11,6 +11,9 @@ pub use openlogi_hid::*;
 /// openlogi-core 的类型（DeviceInventory、PairedDevice、BatteryInfo 等）
 pub use openlogi_core::*;
 
+/// 飞智设备的私有协议实现。
+pub mod flydigi;
+
 /// UniFFI 导出层（BatteryLib 与相关类型）
 pub mod api;
 
