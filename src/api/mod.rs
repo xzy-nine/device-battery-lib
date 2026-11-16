@@ -61,24 +61,17 @@ fn charge_status(status: BatteryStatus) -> ChargeStatus {
     }
 }
 
-/// 设备所属厂商。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, uniffi::Enum)]
-pub enum DeviceVendor {
-    /// 罗技（HID++）
-    Logitech,
-    /// 飞智
-    Flydigi,
-}
-
 /// 一台设备的电量快照。
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct BatteryDeviceInfo {
-    /// 设备所属厂商
-    pub vendor: DeviceVendor,
-    /// USB Vendor ID（0x046D = Logitech，0x37D7 = Flydigi）
+    /// USB Vendor ID（0x046D = 罗技，0x045E = 飞智经接收器）
     pub vendor_id: u16,
     /// USB Product ID
     pub product_id: u16,
+    /// 设备稳定标识，形如 `logitech:046d:c52b:1` / `flydigi:3891212c`。
+    ///
+    /// 同一台设备在多次枚举之间保持不变，用于刷新前后比对与用户自定义名的键。
+    pub device_id: String,
     /// 设备名称
     pub name: String,
     /// 接收器配对槽位（1..=6；直连设备为 0）
@@ -141,24 +134,18 @@ impl BatterySnapshot {
 #[derive(uniffi::Object)]
 pub struct BatteryLib;
 
-fn with_runtime<T, F>(f: F) -> Result<T, BatteryError>
-where
-    F: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>,
-{
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| BatteryError::Enumerate {
-            detail: e.to_string(),
-        })?;
-    rt.block_on(f).map_err(|e| BatteryError::Enumerate {
-        detail: e.to_string(),
-    })
+/// 罗技设备的稳定标识：`logitech:VID:PID:槽位`。
+///
+/// 十六进制小写、不补前导零；槽位取接收器配对槽位，直连设备为 0。
+fn logitech_device_id(vendor_id: u16, product_id: u16, slot: u8) -> String {
+    format!("logitech:{vendor_id:04x}:{product_id:04x}:{slot}")
 }
 
 /// 枚举所有 HID++ 设备及其电量。
-fn collect_devices() -> Result<Vec<BatteryDeviceInfo>, BatteryError> {
-    let inventories = with_runtime(async { Ok(enumerate().await?) })?;
+async fn collect_devices() -> Result<Vec<BatteryDeviceInfo>, BatteryError> {
+    let inventories = enumerate().await.map_err(|error| BatteryError::Enumerate {
+        detail: error.to_string(),
+    })?;
 
     let mut items = Vec::new();
     for inv in &inventories {
@@ -179,7 +166,11 @@ fn collect_devices() -> Result<Vec<BatteryDeviceInfo>, BatteryError> {
             };
 
             items.push(BatteryDeviceInfo {
-                vendor: DeviceVendor::Logitech,
+                device_id: logitech_device_id(
+                    inv.receiver.vendor_id,
+                    inv.receiver.product_id,
+                    p.slot,
+                ),
                 vendor_id: inv.receiver.vendor_id,
                 product_id: inv.receiver.product_id,
                 name: display,
@@ -207,7 +198,7 @@ fn collect_flydigi_devices() -> Vec<BatteryDeviceInfo> {
     devices
         .into_iter()
         .map(|device| BatteryDeviceInfo {
-            vendor: DeviceVendor::Flydigi,
+            device_id: flydigi_device_id(&device.uid),
             vendor_id: device.vendor_id,
             product_id: device.product_id,
             name: if device.product_name.is_empty() {
@@ -228,6 +219,14 @@ fn collect_flydigi_devices() -> Vec<BatteryDeviceInfo> {
             },
         })
         .collect()
+}
+
+/// 飞智设备的稳定标识：`flydigi:UID`。
+///
+/// 服务给的 `uid` 是该设备在飞智体系内的唯一标识（如 `3891212C`），
+/// 比 `VID:PID:槽位` 可靠：接收器模式下飞智复用微软的通用 VID/PID，槽位恒为 0。
+fn flydigi_device_id(uid: &str) -> String {
+    format!("flydigi:{}", uid.to_ascii_lowercase())
 }
 
 /// 按电量百分比归类到本库的电量等级。
@@ -251,9 +250,60 @@ impl BatteryLib {
     /// 枚举设备并读取电量快照。
     ///
     /// 罗技与飞智各自独立枚举：一个后端失败不影响另一个后端的结果。
-    pub fn enumerate_devices(&self) -> Result<BatterySnapshot, BatteryError> {
-        let mut devices = collect_devices().unwrap_or_default();
+    pub async fn enumerate_devices(&self) -> Result<BatterySnapshot, BatteryError> {
+        let mut devices = collect_devices().await.unwrap_or_default();
         devices.extend(collect_flydigi_devices());
         Ok(BatterySnapshot { devices })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logitech_id_carries_vendor_and_slot() {
+        assert_eq!(
+            logitech_device_id(0x046D, 0xC52B, 1),
+            "logitech:046d:c52b:1"
+        );
+    }
+
+    #[test]
+    fn logitech_id_differs_by_slot() {
+        // 同一接收器下的不同槽位是不同设备。
+        assert_ne!(
+            logitech_device_id(0x046D, 0xC539, 1),
+            logitech_device_id(0x046D, 0xC539, 2)
+        );
+    }
+
+    #[test]
+    fn flydigi_id_uses_service_uid() {
+        assert_eq!(flydigi_device_id("3891212C"), "flydigi:3891212c");
+    }
+
+    #[test]
+    fn flydigi_id_is_case_insensitive() {
+        assert_eq!(flydigi_device_id("3891212c"), flydigi_device_id("3891212C"));
+    }
+
+    #[test]
+    fn ids_of_different_vendors_never_collide() {
+        // 飞智在接收器模式下复用微软的通用 VID/PID、槽位恒为 0，
+        // 若仍用 VID:PID:槽位 会与真正的 Xbox 手柄撞车。
+        let flydigi = flydigi_device_id("3891212C");
+        let xbox_like = logitech_device_id(0x045E, 0x028E, 0);
+        assert_ne!(flydigi, xbox_like);
+        assert!(flydigi.starts_with("flydigi:"));
+        assert!(xbox_like.starts_with("logitech:"));
+    }
+
+    #[test]
+    fn percent_maps_to_level_kind() {
+        assert_eq!(level_kind_from_percent(0), BatteryLevelKind::Critical);
+        assert_eq!(level_kind_from_percent(20), BatteryLevelKind::Low);
+        assert_eq!(level_kind_from_percent(80), BatteryLevelKind::Good);
+        assert_eq!(level_kind_from_percent(100), BatteryLevelKind::Full);
     }
 }

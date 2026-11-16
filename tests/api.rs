@@ -4,7 +4,7 @@
 //! 枚举本身的实际行为由 `examples/demo.rs` 在真机上冒烟。
 
 use device_battery_lib::api::{
-    BatteryDeviceInfo, BatteryError, BatteryLevelKind, BatterySnapshot, ChargeStatus, DeviceVendor,
+    BatteryDeviceInfo, BatteryError, BatteryLevelKind, BatterySnapshot, ChargeStatus,
 };
 
 /// 构造一条设备快照，字段取值互不相同以便断言逐字段映射。
@@ -17,7 +17,7 @@ fn device(
     percentage: u8,
 ) -> BatteryDeviceInfo {
     BatteryDeviceInfo {
-        vendor: DeviceVendor::Logitech,
+        device_id: format!("logitech:{vendor_id:04x}:{product_id:04x}:{slot}"),
         vendor_id,
         product_id,
         name: format!("device-{slot}"),

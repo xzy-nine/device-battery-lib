@@ -9,7 +9,7 @@
 | 罗技 | HID++（`openlogi-hidpp`） | `api`，基于 OpenLogi 裁剪的 crate |
 | 飞智 | Space Station 服务管道 | [`flydigi`](src/flydigi.rs) |
 
-两者经同一套 UniFFI 接口对外，`BatteryDeviceInfo.vendor` 区分来源；枚举时各自独立，一个后端失败不影响另一个后端的结果。
+两者经同一套 UniFFI 接口对外，`BatteryDeviceInfo.deviceId` 的厂商前缀区分来源；枚举时各自独立，一个后端失败不影响另一个后端的结果。
 
 飞智的电量由它自己的 Space Station 服务算出，经命名管道 `\\.\pipe\fcs.sock` 对外提供；官方界面与第三方工具都只是这条管道的客户端。本库实现该客户端，不碰 HID、不装驱动。服务未安装或未运行时管道不存在，飞智设备按空列表处理。
 
@@ -36,7 +36,7 @@ cargo build --release
 use device_battery_lib::api::BatteryLib;
 
 let lib = BatteryLib::new();
-let snapshot = lib.enumerate_devices()?;
+let snapshot = lib.enumerate_devices().await?;
 for device in &snapshot.devices {
     println!("{:?} {}: {}%", device.vendor, device.name, device.percentage);
 }
@@ -57,3 +57,5 @@ let devices = device_battery_lib::flydigi::enumerate()?;
 ```
 
 飞智只提供档位而非百分比，`FlydigiDevice::battery_percent` 按一档 20% 换算；罗技的百分比由设备直接上报。
+
+设备标识统一带厂商前缀：罗技为 `logitech:VID:PID:槽位`，飞智为 `flydigi:UID`。

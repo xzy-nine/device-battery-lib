@@ -25,8 +25,6 @@ cargo build --release
 | Linux | `target/release/libdevice_battery_lib.so` |
 | macOS | `target/release/libdevice_battery_lib.dylib` |
 
-> 注意：罗技与飞智的探测都是阻塞的 HID IO，单个调用耗时约数百毫秒到数秒，请勿在 UI 主线程中高频调用。
-
 ## 绑定生成
 
 Kotlin 绑定由 `gobley-uniffi-bindgen` 依据 `uniffi.toml` 生成：
@@ -40,18 +38,14 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 
 ## 数据类型
 
-### `DeviceVendor`
-
-设备来源：`LOGITECH`、`FLYDIGI`。
-
 ### `BatteryDeviceInfo`
 
 一台设备的电量快照。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `vendor` | `DeviceVendor` | 设备来源 |
-| `vendorId` | `UShort` | USB Vendor ID（`0x046D` 罗技，`0x37D7` 飞智） |
+| `deviceId` | `String` | 稳定标识，见下节 |
+| `vendorId` | `UShort` | USB Vendor ID（`0x046D` 罗技，`0x045E` 飞智经接收器） |
 | `productId` | `UShort` | USB Product ID |
 | `name` | `String` | 设备名称 |
 | `slot` | `UByte` | 接收器配对槽位（1..=6；直连设备与飞智为 0） |
@@ -62,6 +56,17 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 | `status` | `ChargeStatus` | 充电状态 |
 
 飞智只上报档位而非百分比，`percentage` 按一档 20% 换算：档位 0 → 0%、1 → 20%、4 → 80%，5 档及以上按 100% 截断。服务不区分充电与满电，档位满时 `status` 记 `FULL`，其余记 `DISCHARGING`。
+
+### 设备标识
+
+`deviceId` 在一次枚举内唯一、跨枚举稳定，用于刷新前后比对与自定义名的键。格式带厂商前缀：
+
+| 厂商 | 格式 | 示例 |
+|------|------|------|
+| 罗技 | `logitech:VID:PID:槽位` | `logitech:046d:c52b:1` |
+| 飞智 | `flydigi:UID` | `flydigi:3891212c` |
+
+飞智不能用 `VID:PID:槽位`：接收器模式下它复用微软的通用 VID/PID（`0x045E:0x028E`），槽位恒为 0，会与真正的 Xbox 手柄撞车。服务返回的 `uid` 才是该设备的唯一标识。
 
 ### `BatteryLevelKind`
 
@@ -91,11 +96,11 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 
 ### `BatteryLib()`
 
-创建入口对象。
+创建入口对象。构造本身不触达硬件。
 
-### `enumerateDevices(): BatterySnapshot`
+### `suspend enumerateDevices(): BatterySnapshot`
 
-枚举罗技与飞智设备及其电量快照。
+枚举罗技与飞智设备及其电量快照。接口为异步：底层探测耗时数百毫秒到数秒，由调用方的调度器承载，不阻塞调用线程。
 
 ### `BatterySnapshot.readBattery(index: Int): BatteryDeviceInfo`
 
@@ -106,12 +111,14 @@ gobley-uniffi-bindgen --library target/release/device_battery_lib.dll \
 ### Kotlin
 
 ```kotlin
+import kotlinx.coroutines.runBlocking
 import notifyrelay.battery.ffi.BatteryLib
 
-val lib = BatteryLib()
-val snapshot = lib.enumerateDevices()
+val snapshot = runBlocking {
+    BatteryLib().enumerateDevices()
+}
 for (device in snapshot.devices) {
-    println("${device.vendor} ${device.name}: ${device.percentage.toInt()}% ${device.level} ${device.status}")
+    println("${device.deviceId} ${device.name}: ${device.percentage.toInt()}% ${device.level} ${device.status}")
 }
 ```
 
@@ -121,9 +128,9 @@ for (device in snapshot.devices) {
 use device_battery_lib::api::BatteryLib;
 
 let lib = BatteryLib::new();
-let snapshot = lib.enumerate_devices()?;
+let snapshot = lib.enumerate_devices().await?;
 for device in &snapshot.devices {
-    println!("{:?} {}: {}% {:?} {:?}", device.vendor, device.name, device.percentage, device.level, device.status);
+    println!("{} {}: {}% {:?} {:?}", device.device_id, device.name, device.percentage, device.level, device.status);
 }
 ```
 
